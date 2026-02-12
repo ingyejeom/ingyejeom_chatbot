@@ -461,7 +461,7 @@ app = FastAPI(title="RAG API (Auto-Index)", lifespan=lifespan)
 # ----------------------------
 # 9) Chat API
 # ----------------------------
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chatbot", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     start = time.time()
     vectordb: Chroma = app.state.vectordb
