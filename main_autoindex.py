@@ -142,6 +142,10 @@ class ChatResponse(BaseModel):
     answer: str
     time_taken: float
     sources: List[SourceInfo]
+    
+class IngestRequest(BaseModel):
+    space_id: str
+    file_path: str
 
 
 # ----------------------------
@@ -197,11 +201,30 @@ def cosine(a: List[float], b: List[float]) -> float:
     nb = math.sqrt(sum(y * y for y in b))
     return dot / (na * nb + 1e-12)
 
+# def rerank_by_embedding(query: str, docs: List[Document], top_k: int) -> List[Document]:
+#     if not docs:
+#         return []
+#     q = embedding_model.embed_query(query)
+#     doc_vecs = embedding_model.embed_documents([(d.page_content or "") for d in docs])
+#     scored = [(cosine(q, v), d) for v, d in zip(doc_vecs, docs)]
+#     scored.sort(key=lambda x: x[0], reverse=True)
+#     return [d for _, d in scored[:top_k]]
+
 def rerank_by_embedding(query: str, docs: List[Document], top_k: int) -> List[Document]:
     if not docs:
         return []
+    
     q = embedding_model.embed_query(query)
-    doc_vecs = embedding_model.embed_documents([(d.page_content or "") for d in docs])
+    
+    doc_vecs = []
+    texts = [(d.page_content or "") for d in docs]
+    batch_size = 10
+    
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        batch_vecs = embedding_model.embed_documents(batch)
+        doc_vecs.extend(batch_vecs)
+
     scored = [(cosine(q, v), d) for v, d in zip(doc_vecs, docs)]
     scored.sort(key=lambda x: x[0], reverse=True)
     return [d for _, d in scored[:top_k]]
@@ -441,17 +464,17 @@ async def lifespan(app: FastAPI):
     app.state.rebuild_lock = asyncio.Lock()
     app.state.stop_event = asyncio.Event()
 
-    await sync_once(app, space_id=DEFAULT_SPACE_ID)
-    app.state.sync_task = asyncio.create_task(periodic_sync(app))
+    # await sync_once(app, space_id=DEFAULT_SPACE_ID)
+    # app.state.sync_task = asyncio.create_task(periodic_sync(app))
 
     print(">> Server Started (auto-index enabled)")
     yield
 
     app.state.stop_event.set()
-    try:
-        app.state.sync_task.cancel()
-    except Exception:
-        pass
+    # try:
+    #     app.state.sync_task.cancel()
+    # except Exception:
+    #     pass
     print(">> Server Shutdown")
 
 
@@ -520,6 +543,42 @@ async def chat(req: ChatRequest):
 
     return ChatResponse(answer=answer, time_taken=time.time() - start, sources=sources)
 
+@app.post("/ingest")
+async def ingest_file(req: IngestRequest):
+    if not os.path.exists(req.file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
+
+    vectordb: Chroma = app.state.vectordb
+
+    uri = f"file://{os.path.abspath(req.file_path)}"
+    doc_id = stable_doc_id(uri, req.space_id)
+    source_label = os.path.basename(req.file_path)
+
+    chunks = load_and_chunk_from_path(req.file_path, source_label, req.space_id, doc_id)
+
+    if not chunks:
+        return {"status": "skipped", "message": "지원하지 않는 확장자이거나 추출할 텍스트가 없습니다."}
+
+    async with app.state.write_lock:
+        old_data = vectordb._collection.get(where={"doc_id": doc_id})
+        old_ids = old_data.get("ids", [])
+        if old_ids:
+            vectordb._collection.delete(ids=old_ids)
+
+        batch_size = 10
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i : i + batch_size]
+            vectordb.add_documents(batch)
+            print(f"임베딩 진행 중... ({i + len(batch)} / {len(chunks)})")
+
+    async with app.state.rebuild_lock:
+        await rebuild_bm25(app, space_id=req.space_id)
+
+    return {
+        "status": "success", 
+        "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.",
+        "space_id": req.space_id
+    }
 
 if __name__ == "__main__":
     import uvicorn
