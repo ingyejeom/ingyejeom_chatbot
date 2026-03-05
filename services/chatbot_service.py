@@ -243,13 +243,15 @@ async def process_chat(req: ChatRequest, app: FastAPI) -> ChatResponse:
     sources = [SourceInfo(source=(d.metadata or {}).get("source", "unknown"), snippet=(d.page_content or "")) for d in final_docs]
     return ChatResponse(answer=answer, time_taken=time.time() - start, sources=sources)
 
-async def process_ingest(req: IngestRequest, app: FastAPI) -> dict:
-    if not os.path.exists(req.file_path): raise HTTPException(status_code=404, detail=f"File not found: {req.file_path}")
+async def process_ingest(file_path: str, space_id: str, app: FastAPI) -> dict:
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    
     vectordb = app.state.vectordb
-    uri, source_label = f"file://{os.path.abspath(req.file_path)}", os.path.basename(req.file_path)
-    doc_id = stable_doc_id(uri, req.space_id)
+    uri, source_label = f"file://{os.path.abspath(file_path)}", os.path.basename(file_path)
+    doc_id = stable_doc_id(uri, space_id)
 
-    chunks = load_and_chunk_from_path(req.file_path, source_label, req.space_id, doc_id)
+    chunks = load_and_chunk_from_path(file_path, source_label, space_id, doc_id)
     if not chunks: return {"status": "skipped", "message": "지원하지 않는 확장자이거나 추출할 텍스트가 없습니다."}
 
     async with app.state.write_lock:
@@ -259,5 +261,5 @@ async def process_ingest(req: IngestRequest, app: FastAPI) -> dict:
             vectordb.add_documents(chunks[i : i + batch_size])
             print(f"임베딩 진행 중... ({min(i + batch_size, len(chunks))} / {len(chunks)})")
 
-    async with app.state.rebuild_lock: await rebuild_bm25(app, space_id=req.space_id)
-    return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": req.space_id}
+    async with app.state.rebuild_lock: await rebuild_bm25(app, space_id=space_id)
+    return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": space_id}
