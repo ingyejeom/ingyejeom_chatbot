@@ -1,0 +1,13 @@
+# requirements.txt
+fastapi
+uvicorn
+pydantic
+langchain-core
+langchain-community
+langchain-ollama
+langchain-chroma
+langchain-text-splitters
+langchain-experimental
+PyMuPDF
+boto3
+python-multipart

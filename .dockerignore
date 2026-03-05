@@ -1,0 +1,12 @@
+# .dockerignore
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.env
+
+# 로컬에서 테스트한 데이터와 로그는 제외 (컨테이너가 무거워짐)
+chroma_db/
+logs/
+tmp_ingest/
