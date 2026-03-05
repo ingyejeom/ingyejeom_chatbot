@@ -1,3 +1,4 @@
+import datetime
 import os, re, json, time, math, uuid, asyncio, hashlib
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
@@ -243,7 +244,7 @@ async def process_chat(req: ChatRequest, app: FastAPI) -> ChatResponse:
     sources = [SourceInfo(source=(d.metadata or {}).get("source", "unknown"), snippet=(d.page_content or "")) for d in final_docs]
     return ChatResponse(answer=answer, time_taken=time.time() - start, sources=sources)
 
-async def process_ingest(file_path: str, space_id: str, app: FastAPI) -> dict:
+async def process_ingest(file_path: str, space_id: str, app: FastAPI, user_id: str = "Unknown") -> dict:
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
     
@@ -259,7 +260,10 @@ async def process_ingest(file_path: str, space_id: str, app: FastAPI) -> dict:
         batch_size = 10
         for i in range(0, len(chunks), batch_size):
             vectordb.add_documents(chunks[i : i + batch_size])
-            print(f"임베딩 진행 중... ({min(i + batch_size, len(chunks))} / {len(chunks)})")
+            
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            current_chunk = min(i+batch_size, len(chunks))
+            print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 진행 중 ...({current_chunk}/{len(chunks)})")
 
     async with app.state.rebuild_lock: await rebuild_bm25(app, space_id=space_id)
     return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": space_id}
