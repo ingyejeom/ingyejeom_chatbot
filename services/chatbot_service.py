@@ -265,7 +265,7 @@ async def process_ingest(file_path: str, space_id: str, app: FastAPI, user_id: s
                 
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 current_chunk = min(i+batch_size, len(chunks))
-                print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 진행 중 ...({current_chunk}/{len(chunks)})")
+                print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 진행 중 ...({current_chunk}/{len(chunks)})", flush=True)
 
         async with app.state.rebuild_lock: await rebuild_bm25(app, space_id=space_id)
         return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": space_id}
