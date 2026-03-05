@@ -245,25 +245,30 @@ async def process_chat(req: ChatRequest, app: FastAPI) -> ChatResponse:
     return ChatResponse(answer=answer, time_taken=time.time() - start, sources=sources)
 
 async def process_ingest(file_path: str, space_id: str, app: FastAPI, user_id: str = "Unknown") -> dict:
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-    
-    vectordb = app.state.vectordb
-    uri, source_label = f"file://{os.path.abspath(file_path)}", os.path.basename(file_path)
-    doc_id = stable_doc_id(uri, space_id)
+    try:
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+        
+        vectordb = app.state.vectordb
+        uri, source_label = f"file://{os.path.abspath(file_path)}", os.path.basename(file_path)
+        doc_id = stable_doc_id(uri, space_id)
 
-    chunks = load_and_chunk_from_path(file_path, source_label, space_id, doc_id)
-    if not chunks: return {"status": "skipped", "message": "지원하지 않는 확장자이거나 추출할 텍스트가 없습니다."}
+        chunks = load_and_chunk_from_path(file_path, source_label, space_id, doc_id)
+        if not chunks: return {"status": "skipped", "message": "지원하지 않는 확장자이거나 추출할 텍스트가 없습니다."}
 
-    async with app.state.write_lock:
-        if old_ids := vectordb._collection.get(where={"doc_id": doc_id}).get("ids", []): vectordb._collection.delete(ids=old_ids)
-        batch_size = 10
-        for i in range(0, len(chunks), batch_size):
-            vectordb.add_documents(chunks[i : i + batch_size])
-            
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            current_chunk = min(i+batch_size, len(chunks))
-            print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 진행 중 ...({current_chunk}/{len(chunks)})")
+        async with app.state.write_lock:
+            if old_ids := vectordb._collection.get(where={"doc_id": doc_id}).get("ids", []): vectordb._collection.delete(ids=old_ids)
+            batch_size = 10
+            for i in range(0, len(chunks), batch_size):
+                vectordb.add_documents(chunks[i : i + batch_size])
+                
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                current_chunk = min(i+batch_size, len(chunks))
+                print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 진행 중 ...({current_chunk}/{len(chunks)})")
 
-    async with app.state.rebuild_lock: await rebuild_bm25(app, space_id=space_id)
-    return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": space_id}
+        async with app.state.rebuild_lock: await rebuild_bm25(app, space_id=space_id)
+        return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": space_id}
+    except Exception as e:
+        print("백그라운드 에러@@@@@@@@@@")
+        print(f"에러 원인: {str(e)}")
+        traceback.print_exc()
