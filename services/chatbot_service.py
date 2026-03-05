@@ -271,5 +271,5 @@ async def process_ingest(file_path: str, space_id: str, app: FastAPI, user_id: s
         return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": space_id}
     except Exception as e:
         print("백그라운드 에러@@@@@@@@@@")
-        print(f"에러 원인: {str(e)}")
+        print(f"에러 원인: {str(e)}", flush=True)
         traceback.print_exc()
