@@ -55,8 +55,12 @@ llm = ChatOllama(
     temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
     num_predict=int(os.getenv("LLM_NUM_PREDICT", "240")),
     timeout=int(os.getenv("LLM_TIMEOUT", "25")),
+    base_url="http://host.docker.internal:11434"
 )
-embedding_model = OllamaEmbeddings(model=EMBED_MODEL)
+embedding_model = OllamaEmbeddings(
+    model=EMBED_MODEL,
+    base_url="http://host.docker.internal:11434"
+)
 
 # 4) Vector Store Builder
 def get_vectorstore() -> Chroma:
