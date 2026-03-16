@@ -7,8 +7,8 @@ def ensure_dir(p: str) -> None:
     os.makedirs(p, exist_ok=True)
 
 # 1) Configuration
-DB_DIR = os.getenv("DB_DIR", "chroma_db")
-LOCAL_SOURCES = [p for p in os.getenv("LOCAL_SOURCES", "data_storage").split(";") if p.strip()]
+DB_DIR = os.getenv("DB_DIR", "/content/chroma_db")
+LOCAL_SOURCES = [p for p in os.getenv("LOCAL_SOURCES", "/content/data_storage").split(";") if p.strip()]
 S3_BUCKET = os.getenv("S3_BUCKET", "").strip()
 S3_PREFIXES = [p for p in os.getenv("S3_PREFIXES", "").split(";") if p.strip()]
 S3_REGION = os.getenv("S3_REGION", "").strip()
@@ -31,6 +31,7 @@ DEFAULT_SPACE_ID = os.getenv("DEFAULT_SPACE_ID", "default")
 BASE_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You are a helpful assistant.\n"
+     "Never use your internal knowledge.\n"
      "Use ONLY the information provided in [Context] for factual claims.\n"
      "If the answer is not in the context, say you don't have that information.\n\n"
      "CRITICAL LANGUAGE RULE:\n"
@@ -47,19 +48,19 @@ BASE_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 # 3) LLM / Embeddings
-LLM_MODEL = os.getenv("LLM_MODEL", "gemma2:2b")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemma2:9b")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "mxbai-embed-large")
 
 llm = ChatOllama(
     model=LLM_MODEL,
     temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
     num_predict=int(os.getenv("LLM_NUM_PREDICT", "240")),
     timeout=int(os.getenv("LLM_TIMEOUT", "25")),
-    base_url="http://host.docker.internal:11434"
+    base_url="http://127.0.0.1:11434"
 )
 embedding_model = OllamaEmbeddings(
     model=EMBED_MODEL,
-    base_url="http://host.docker.internal:11434"
+    base_url="http://127.0.0.1:11434"
 )
 
 # 4) Vector Store Builder

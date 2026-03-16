@@ -13,11 +13,11 @@ async def chat(req: ChatRequest, request: Request):
 
 @router.post("/ingest")
 async def ingest_file(request: Request, background_tasks: BackgroundTasks, file: UploadFile = File(...), space_id: str = Form(...), user_id: str = Form("Unknown")):
-    save_path = f"/app/data_storage/{file.filename}"
+    save_path = f"/content/data_storage/{file.filename}"
     with open(save_path, "wb") as buffer:
         content = await file.read()
         buffer.write(content)
-        
+
     background_tasks.add_task(process_ingest, save_path, space_id, request.app, user_id)
-    
+
     return {"status" : "processing", "message" : "파일 접수 완료. 백그라운드에서 학습 중입니다."}
