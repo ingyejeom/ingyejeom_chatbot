@@ -13,7 +13,7 @@ class ChatResponse(BaseModel):
     answer: str
     time_taken: float
     sources: List[SourceInfo]
-    
+
 class IngestRequest(BaseModel):
     space_id: str
     file_path: str

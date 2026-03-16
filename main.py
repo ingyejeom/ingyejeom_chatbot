@@ -34,5 +34,17 @@ app.include_router(router)
 
 if __name__ == "__main__":
     import uvicorn
-    # 💡 주의: 파일이 쪼개졌으므로 모듈 이름을 main:app으로 실행해야 합니다!
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    import nest_asyncio
+    from pyngrok import ngrok
+
+    # 코랩 환경 루프 충돌 방지
+    nest_asyncio.apply()
+
+    # 외부 접속용 ngrok 설정 (NGROK_TOKEN에는 본인의 토큰을 넣으세요)
+    NGROK_TOKEN = "3AW7vlF3pmyC2QQrhfmmvLc2IB8_2399FN1LYiPPybrHscyQx"
+    ngrok.set_auth_token(NGROK_TOKEN)
+    public_url = ngrok.connect(8000)
+    print(f"🌍🌍🌍🌍🌍🌍🌍🌍🌍🌍\n 외부 접속 주소: {public_url}\n🌍🌍🌍🌍🌍🌍🌍🌍🌍🌍")
+
+    # 서버 실행 (reload=True는 코랩에서 에러를 유발할 수 있어 제거)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

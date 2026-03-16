@@ -108,6 +108,8 @@ def load_and_chunk_from_path(path: str, source_label: str, space_id: str, doc_id
 
     cleaned = []
     for i, d in enumerate(chunks):
+        if not d.page_content or not d.page_content.strip():
+          continue
         d.metadata = d.metadata or {}
         d.metadata.update({"doc_id": doc_id, "chunk_index": i, "source": source_label, "space_id": space_id})
         d.metadata = sanitize_metadata(d.metadata)
@@ -137,8 +139,10 @@ class IndexItem:
 def list_local_items(space_id: str) -> List[IndexItem]:
     items = []
     for root in LOCAL_SOURCES:
-        if not root or not os.path.exists(root): continue
-        for dirpath, _, filenames in os.walk(root):
+        full_root = os.path.join("/content", root) if not root.startswith("/") else root
+        if not full_root or not os.path.exists(full_root): continue
+
+        for dirpath, _, filenames in os.walk(full_root):
             for fn in filenames:
                 if not supported_ext(fn): continue
                 path = os.path.join(dirpath, fn)
@@ -153,12 +157,12 @@ def list_s3_items(space_id: str) -> List[IndexItem]:
         for page in s3.get_paginator("list_objects_v2").paginate(Bucket=S3_BUCKET, Prefix=prefix):
             for obj in page.get("Contents", []):
                 if not supported_ext(obj["Key"]): continue
-                
+
                 # 💡 f-string 에러를 피하기 위해 ETag를 밖에서 먼저 깔끔하게 처리합니다!
                 raw_etag = (obj.get('ETag') or '').strip('"')
                 fp = f"etag:{raw_etag};lm:{obj.get('LastModified')}"
                 local_path = os.path.join(TMP_DIR, uuid.uuid4().hex + os.path.splitext(obj["Key"])[1].lower())
-                
+
                 s3.download_file(S3_BUCKET, obj["Key"], local_path)
                 out.append(IndexItem(uri=f"s3://{S3_BUCKET}/{obj['Key']}", label=f"s3://{S3_BUCKET}/{obj['Key']}", local_path=local_path, fingerprint=fp))
     return out
@@ -249,7 +253,7 @@ async def process_ingest(file_path: str, space_id: str, app: FastAPI, user_id: s
     try:
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-        
+
         vectordb = app.state.vectordb
         uri, source_label = f"file://{os.path.abspath(file_path)}", os.path.basename(file_path)
         doc_id = stable_doc_id(uri, space_id)
@@ -262,11 +266,11 @@ async def process_ingest(file_path: str, space_id: str, app: FastAPI, user_id: s
             batch_size = 10
             for i in range(0, len(chunks), batch_size):
                 vectordb.add_documents(chunks[i : i + batch_size])
-                
+
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 current_chunk = min(i+batch_size, len(chunks))
                 print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 진행 중 ...({current_chunk}/{len(chunks)})", flush=True)
-
+        print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 완료", flush=True)
         async with app.state.rebuild_lock: await rebuild_bm25(app, space_id=space_id)
         return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": space_id}
     except Exception as e:
