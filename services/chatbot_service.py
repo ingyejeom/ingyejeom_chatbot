@@ -60,15 +60,19 @@ def cosine(a: List[float], b: List[float]) -> float:
     na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(y * y for y in b))
     return dot / (na * nb + 1e-12)
 
-def rerank_by_embedding(query: str, docs: List[Document], top_k: int) -> List[Document]:
+def rerank_by_embedding(query: str, docs: List[Document], top_k: int, threshold: float = 0.60) -> List[Document]:
     if not docs: return []
     q = embedding_model.embed_query(query)
     doc_vecs, texts, batch_size = [], [(d.page_content or "") for d in docs], 10
     for i in range(0, len(texts), batch_size):
         doc_vecs.extend(embedding_model.embed_documents(texts[i : i + batch_size]))
+
+    # 쿼리와 청크 간의 유사도 점수(0.0 ~ 1.0)를 계산
     scored = [(cosine(q, v), d) for v, d in zip(doc_vecs, docs)]
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [d for _, d in scored[:top_k]]
+
+    # top_k 개수 안에서 자르되, 점수가 threshold(0.55) 이상인 것만 필터링
+    return [d for score, d in scored[:top_k] if score >= threshold]
 
 def stable_doc_id(source_uri: str, space_id: str) -> str: return hashlib.sha1(f"{space_id}::{source_uri}".encode("utf-8")).hexdigest()
 def file_sha256(path: str) -> str:
@@ -236,18 +240,59 @@ async def process_chat(req: ChatRequest, app: FastAPI) -> ChatResponse:
                     seen.add(key)
         except Exception: pass
 
-    final_docs = rerank_by_embedding(q, candidates, top_k=K_FINAL)
+    final_docs = rerank_by_embedding(q, candidates, top_k=K_FINAL, threshold=0.60)
 
     if not final_docs:
         answer = "관련 자료에서 답을 찾지 못했습니다." if answer_language == "Korean" else "I don't have information about that."
-        return ChatResponse(answer=answer, time_taken=time.time() - start, sources=[])
+        #return ChatResponse(answer=answer, time_taken=time.time() - start, sources=[])
+        return ChatResponse(answer=answer, sources=[])
 
     context = build_context(final_docs, max_chars=MAX_CONTEXT_CHARS)
     chain = BASE_PROMPT | llm | StrOutputParser()
     answer = (chain.invoke({"context": context, "question": q, "answer_language": answer_language}) or "").strip()
 
-    sources = [SourceInfo(source=(d.metadata or {}).get("source", "unknown"), snippet=(d.page_content or "")) for d in final_docs]
-    return ChatResponse(answer=answer, time_taken=time.time() - start, sources=sources)
+    sources = []
+
+    no_answer_keywords = [
+        "관련 자료에서 답을 찾지",
+        "관련 자료에서",
+
+        "정보를 가지고 있지 않",
+        "정보가 없습니다",
+        "해당 정보",
+        "알 수 없습니다",
+        "언급되어 있지 않",
+        "제공된 내용",
+        "제공되지 않",
+        "내용이 없습니다",
+        "답변할 수 없",
+
+        "I don't have information",
+        "don't have that information",
+        "not in the context",
+
+        "안녕",
+        "알겠",
+        "반갑",
+        "다행"
+    ]
+    if not any(keyword in answer for keyword in no_answer_keywords):
+        seen_sources = set()
+
+        for d in final_docs:
+            meta = d.metadata or {}
+            source_name = meta.get("source", "unknown")
+            page_num = meta.get("page")
+            page_val = int(page_num) + 1 if page_num is not None else None
+
+            uniq_key = f"{source_name}_{page_val}"
+            if uniq_key not in seen_sources:
+                sources.append(SourceInfo(source=source_name, page=page_val))
+                seen_sources.add(uniq_key)
+
+
+    # return ChatResponse(answer=answer, time_taken=time.time() - start, sources=sources)
+    return ChatResponse(answer=answer, sources=sources)
 
 async def process_ingest(file_path: str, space_id: str, app: FastAPI, user_id: str = "Unknown") -> dict:
     try:

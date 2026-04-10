@@ -7,11 +7,13 @@ class ChatRequest(BaseModel):
 
 class SourceInfo(BaseModel):
     source: str
-    snippet: str
+    #snippet: str
+    page: Optional[int] = None
+
 
 class ChatResponse(BaseModel):
     answer: str
-    time_taken: float
+    #time_taken: float
     sources: List[SourceInfo]
 
 class IngestRequest(BaseModel):

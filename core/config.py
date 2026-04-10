@@ -54,7 +54,7 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "mxbai-embed-large")
 llm = ChatOllama(
     model=LLM_MODEL,
     temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
-    num_predict=int(os.getenv("LLM_NUM_PREDICT", "240")),
+    num_predict=int(os.getenv("LLM_NUM_PREDICT", "2048")),
     timeout=int(os.getenv("LLM_TIMEOUT", "25")),
     base_url="http://127.0.0.1:11434"
 )
