@@ -35,12 +35,17 @@ def sanitize_metadata(meta: dict) -> dict:
         else: clean[k] = str(v)
     return clean
 
+# def split_semantic_then_fallback(docs: List[Document]) -> List[Document]:
+#     try:
+#         return SemanticChunker(embedding=embedding_model, breakpoint_threshold_type="percentile", breakpoint_threshold_amount=90).split_documents(docs)
+#     except Exception:
+#         splitter = RecursiveCharacterTextSplitter(chunk_size=900, chunk_overlap=120)
+#         return splitter.split_documents(docs)
+
 def split_semantic_then_fallback(docs: List[Document]) -> List[Document]:
-    try:
-        return SemanticChunker(embedding=embedding_model, breakpoint_threshold_type="percentile", breakpoint_threshold_amount=90).split_documents(docs)
-    except Exception:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=900, chunk_overlap=120)
-        return splitter.split_documents(docs)
+    # 코랩 환경에서 SemanticChunker 대신 빠른 텍스트 분할기 사용
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)
+    return splitter.split_documents(docs)
 
 def build_context(docs: List[Document], max_chars: int = MAX_CONTEXT_CHARS) -> str:
     parts, total = [], 0
@@ -226,12 +231,14 @@ async def process_chat(req: ChatRequest, app: FastAPI) -> ChatResponse:
     dense_kwargs = {"k": K_DENSE, "fetch_k": FETCH_K, "lambda_mult": LAMBDA_MULT} if dense_search_type == "mmr" else {"k": K_DENSE}
     dense_kwargs["filter"] = {"space_id": space_id}
 
-    candidates = list(vectordb.as_retriever(search_type=dense_search_type, search_kwargs=dense_kwargs).invoke(q))
+    retriever = vectordb.as_retriever(search_type=dense_search_type, search_kwargs=dense_kwargs)
+    candidates = list(await asyncio.to_thread(retriever.invoke, q))
 
     if ENABLE_BM25 and bm25 is not None:
         try:
             bm25.k = K_SPARSE
             seen = {d.metadata.get("doc_id", "") + ":" + str(d.metadata.get("chunk_index", "")) for d in candidates}
+            bm25_results = await asyncio.to_thread(bm25.invoke, q)
             for d in bm25.invoke(q):
                 if (d.metadata or {}).get("space_id") != space_id: continue
                 key = d.metadata.get("doc_id", "") + ":" + str(d.metadata.get("chunk_index", ""))
@@ -240,7 +247,7 @@ async def process_chat(req: ChatRequest, app: FastAPI) -> ChatResponse:
                     seen.add(key)
         except Exception: pass
 
-    final_docs = rerank_by_embedding(q, candidates, top_k=K_FINAL, threshold=0.60)
+    final_docs = await asyncio.to_thread(rerank_by_embedding, q, candidates, K_FINAL, 0.60)
 
     if not final_docs:
         answer = "관련 자료에서 답을 찾지 못했습니다." if answer_language == "Korean" else "I don't have information about that."
@@ -249,7 +256,7 @@ async def process_chat(req: ChatRequest, app: FastAPI) -> ChatResponse:
 
     context = build_context(final_docs, max_chars=MAX_CONTEXT_CHARS)
     chain = BASE_PROMPT | llm | StrOutputParser()
-    answer = (chain.invoke({"context": context, "question": q, "answer_language": answer_language}) or "").strip()
+    answer = (await chain.ainvoke({"context": context, "question": q, "answer_language": answer_language}) or "").strip()
 
     sources = []
 
@@ -303,18 +310,21 @@ async def process_ingest(file_path: str, space_id: str, app: FastAPI, user_id: s
         uri, source_label = f"file://{os.path.abspath(file_path)}", os.path.basename(file_path)
         doc_id = stable_doc_id(uri, space_id)
 
-        chunks = load_and_chunk_from_path(file_path, source_label, space_id, doc_id)
+        chunks = await asyncio.to_thread(load_and_chunk_from_path, file_path, source_label, space_id, doc_id)
+
         if not chunks: return {"status": "skipped", "message": "지원하지 않는 확장자이거나 추출할 텍스트가 없습니다."}
 
         async with app.state.write_lock:
             if old_ids := vectordb._collection.get(where={"doc_id": doc_id}).get("ids", []): vectordb._collection.delete(ids=old_ids)
-            batch_size = 10
+            batch_size = 20
             for i in range(0, len(chunks), batch_size):
-                vectordb.add_documents(chunks[i : i + batch_size])
+                await asyncio.to_thread(vectordb.add_documents, chunks[i : i + batch_size])
 
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 current_chunk = min(i+batch_size, len(chunks))
                 print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 진행 중 ...({current_chunk}/{len(chunks)})", flush=True)
+                await asyncio.sleep(0.1)
+
         print(f"[{now}] [User: {user_id} | Space: {space_id}] 임베딩 완료", flush=True)
         async with app.state.rebuild_lock: await rebuild_bm25(app, space_id=space_id)
         return {"status": "success", "message": f"성공적으로 {len(chunks)}개의 청크를 DB에 추가했습니다.", "space_id": space_id}
