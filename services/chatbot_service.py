@@ -7,7 +7,14 @@ from fastapi import FastAPI, HTTPException
 
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
-from langchain_community.document_loaders import PyMuPDFLoader, TextLoader
+#from langchain_community.document_loaders import PyMuPDFLoader, TextLoader
+from langchain_community.document_loaders import (
+    PyMuPDFLoader,
+    TextLoader,
+    Docx2txtLoader,
+    UnstructuredPowerPointLoader,
+    UnstructuredExcelLoader
+)
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.utils import filter_complex_metadata
@@ -97,23 +104,65 @@ def save_state(state: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f: json.dump(state, f, ensure_ascii=False, indent=2)
     os.replace(tmp, INDEX_STATE_PATH)
 
+# def supported_ext(name: str) -> bool:
+#     nl = (name or "").lower()
+#     return nl.endswith(".pdf") or nl.endswith(".txt") or nl.endswith(".md")
 def supported_ext(name: str) -> bool:
     nl = (name or "").lower()
-    return nl.endswith(".pdf") or nl.endswith(".txt") or nl.endswith(".md")
+    return nl.endswith((".pdf", ".txt", ".md", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls"))
 
+# def load_and_chunk_from_path(path: str, source_label: str, space_id: str, doc_id: str) -> List[Document]:
+#     ext = os.path.splitext(path)[1].lower()
+#     if ext == ".pdf":
+#         docs = PyMuPDFLoader(path).load()
+#         for d in docs:
+#             d.page_content = preprocess_text(d.page_content)
+#             d.metadata = d.metadata or {}
+#             d.metadata["source"] = source_label
+#         chunks = split_semantic_then_fallback(docs)
+#     elif ext in [".txt", ".md"]:
+#         raw = preprocess_text(TextLoader(path, encoding="utf-8").load()[0].page_content)
+#         chunks = split_semantic_then_fallback([Document(page_content=raw, metadata={"source": source_label})])
+#     else: return []
+
+#     cleaned = []
+#     for i, d in enumerate(chunks):
+#         if not d.page_content or not d.page_content.strip():
+#           continue
+#         d.metadata = d.metadata or {}
+#         d.metadata.update({"doc_id": doc_id, "chunk_index": i, "source": source_label, "space_id": space_id})
+#         d.metadata = sanitize_metadata(d.metadata)
+#         cleaned.append(d)
+#     return filter_complex_metadata(cleaned)
 def load_and_chunk_from_path(path: str, source_label: str, space_id: str, doc_id: str) -> List[Document]:
     ext = os.path.splitext(path)[1].lower()
-    if ext == ".pdf":
-        docs = PyMuPDFLoader(path).load()
-        for d in docs:
-            d.page_content = preprocess_text(d.page_content)
-            d.metadata = d.metadata or {}
-            d.metadata["source"] = source_label
-        chunks = split_semantic_then_fallback(docs)
-    elif ext in [".txt", ".md"]:
-        raw = preprocess_text(TextLoader(path, encoding="utf-8").load()[0].page_content)
-        chunks = split_semantic_then_fallback([Document(page_content=raw, metadata={"source": source_label})])
-    else: return []
+
+    docs = []
+    try:
+        if ext == ".pdf":
+            docs = PyMuPDFLoader(path).load()
+        elif ext in [".txt", ".md"]:
+            raw = TextLoader(path, encoding="utf-8").load()[0].page_content
+            docs = [Document(page_content=raw, metadata={"source": source_label})]
+        elif ext in [".docx", ".doc"]:
+            docs = Docx2txtLoader(path).load()
+        elif ext in [".pptx", ".ppt"]:
+            docs = UnstructuredPowerPointLoader(path).load()
+        elif ext in [".xlsx", ".xls"]:
+            docs = UnstructuredExcelLoader(path).load()
+        else:
+            return []
+    except Exception as e:
+        print(f"문서 파싱 에러 ({ext}): {e}")
+        return []
+
+    # 파싱된 텍스트 공통 전처리 및 메타데이터 주입
+    for d in docs:
+        d.page_content = preprocess_text(d.page_content)
+        d.metadata = d.metadata or {}
+        d.metadata["source"] = source_label
+
+    chunks = split_semantic_then_fallback(docs)
 
     cleaned = []
     for i, d in enumerate(chunks):
